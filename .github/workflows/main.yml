@@ -1,0 +1,73 @@
+# Backend CI — triggers tests and auto-deploy to office server on main
+name: Backend CI
+
+on:
+  push:
+    branches:
+      - '**'
+    paths:
+      - 'BackEND/**'
+      - '.github/workflows/backend-ci.yml'
+  pull_request:
+    paths:
+      - 'BackEND/**'
+      - '.github/workflows/backend-ci.yml'
+
+jobs:
+  backend-quick:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: BackEND
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: BackEND/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run test
+      - run: npm run build
+
+  backend-full:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: BackEND
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: BackEND/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run test:ci
+      - run: npm run build
+
+  deploy-backend:
+    needs: backend-full
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, windows]
+    concurrency:
+      group: office-server-deploy
+      cancel-in-progress: false
+    steps:
+      - name: Pull latest code on server
+        shell: cmd
+        run: |
+          set "REPO=D:\BullRun"
+          set "SAFE_REPO=%REPO:\=/%"
+          git -c safe.directory="%SAFE_REPO%" -C "%REPO%" status --porcelain | findstr . >nul
+          if %ERRORLEVEL% EQU 0 (
+            echo Server repo has local changes. Commit/stash them before auto-deploy.
+            exit /b 1
+          )
+
+          git -c safe.directory="%SAFE_REPO%" -C "%REPO%" fetch origin
+          git -c safe.directory="%SAFE_REPO%" -C "%REPO%" checkout main
+          git -c safe.directory="%SAFE_REPO%" -C "%REPO%" pull --ff-only origin main
